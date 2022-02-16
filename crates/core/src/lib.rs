@@ -62,3 +62,59 @@ pub extern "C" fn run() {
         engine::store(&output).expect("Couldn't store output");
     }
 }
+
+pub extern "C" fn init_engine() {
+    // What does this need to return?
+    unsafe {
+        let mut context = Context::default();
+        context.register_globals(io::stdout()).unwrap();
+        JS_CONTEXT.set(context).unwrap();
+    }
+}
+
+pub extern "C" fn init_src() {
+    // what should this return?
+    // we discussed passing in the script, and fn name instead of hard coding it
+    // having some trouble passing them in as args in a ffi-safe way. Tried String and CString types
+    unsafe {
+        let context = JS_CONTEXT.get().unwrap();
+        let mut contents = String::new();
+        io::stdin().read_to_string(&mut contents).unwrap();
+
+        let _ = context.eval_global(SCRIPT_NAME, &contents).unwrap();
+        let global = context.global_object().unwrap();
+        let shopify = global.get_property("Shopify").unwrap();
+        let main = shopify.get_property("main").unwrap();
+
+        ENTRYPOINT.0.set(shopify).unwrap();
+        ENTRYPOINT.1.set(main).unwrap();
+    }
+}
+
+pub extern "C" fn execute() {
+    // what should this return?
+    unsafe {
+        let context = JS_CONTEXT.get().unwrap();
+        let shopify = ENTRYPOINT.0.get().unwrap();
+        let main = ENTRYPOINT.1.get().unwrap();
+        let input_bytes = engine::load().expect("Couldn't load input");
+
+        let input_value = transcode_input(&context, &input_bytes).unwrap();
+        let output_value = main.call(&shopify, &[input_value]);
+
+        if output_value.is_err() {
+            panic!("{}", output_value.unwrap_err().to_string());
+        }
+
+        let output = transcode_output(output_value.unwrap()).unwrap();
+        engine::store(&output).expect("Couldn't store output");
+    }
+}
+
+pub extern "C" fn canonical_abi_realloc(_ptr: u32, size: u32, _align: u32, _new_size: u32) -> *mut std::ffi::c_void {
+    // Don't really understand what this and the return type is
+    Box::into_raw(vec![0u8; size as usize].into_boxed_slice()) as _
+}
+
+pub extern "C" fn canonical_abi_free(_ptr: u32, _size: u32, _align: u32) {
+}
