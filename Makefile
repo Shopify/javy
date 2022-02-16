@@ -17,6 +17,15 @@ core:
 				&& cargo build --release --target=wasm32-wasi \
 				&& cd -
 
+core-wasi:
+		cd crates/core \
+			&& cargo build --release --target=wasm32-wasi --features standalone-wasi \
+			&& cd - \
+			&& cp target/wasm32-wasi/release/javy_core.wasm crates/cli/javy_core.wasm				
+
+wizen-core:
+	wizer --allow-wasi target/wasm32-wasi/release/javy_core.wasm -o crates/cli/javy_core.wizened.wasm 
+
 test-core:
 		cd crates/core \
 				&& cargo wasi test --features standalone-wasi -- --nocapture \
