@@ -8,6 +8,8 @@ use js_binding::{context::Context, value::Value};
 use once_cell::sync::OnceCell;
 use std::io::{self, Read};
 use transcode::{transcode_input, transcode_output};
+use std::alloc::{alloc, dealloc, Layout};
+use std::ptr::copy_nonoverlapping;
 
 #[cfg(not(test))]
 #[global_allocator]
@@ -56,17 +58,25 @@ pub extern "C" fn init_engine() {
     }
 }
 
+// mod input {
+//     #[export_name = "init-src"]
+//     unsafe extern "C" fn __wit_bindgen_init_src(arg0: i32, arg1: i32, ){
+//       let len0 = arg1 as usize;
+//       <super::Input as Input>::init_src(String::from_utf8(Vec::from_raw_parts(arg0 as *mut _, len0, len0)).unwrap());
+//     }
+//     pub trait Input {
+//       fn init_src(js_src: String,);
+//     }
+//   }
+
 #[export_name = "init_src"]
-pub extern "C" fn init_src() {
-    // what should this return?
-    // we discussed passing in the script, and fn name instead of hard coding it
-    // having some trouble passing them in as args in a ffi-safe way. Tried String and CString types
+pub unsafe extern "C" fn init_src(js_str_ptr: *const u8, js_str_len: usize) {
+    // TODO: Who is supposed to own this pointer? Is it the caller who allocated, or this module?
+    let js = String::from_utf8(Vec::from_raw_parts(js_str_ptr, js_str_len));
+
     unsafe {
         let context = JS_CONTEXT.get().unwrap();
-        let mut contents = String::new();
-        io::stdin().read_to_string(&mut contents).unwrap();
-
-        let _ = context.eval_global(SCRIPT_NAME, &contents).unwrap();
+        let _ = context.eval_global(SCRIPT_NAME, &js).unwrap();
         let global = context.global_object().unwrap();
         let shopify = global.get_property("Shopify").unwrap();
         let main = shopify.get_property("main").unwrap();
@@ -79,6 +89,9 @@ pub extern "C" fn init_src() {
 #[export_name = "execute"]
 pub extern "C" fn execute() {
     // what should this return?
+    // what should this return?
+    // we discussed passing in the script, and fn name instead of hard coding it
+    // having some trouble passing them in as args in a ffi-safe way. Tried String and CString types
     unsafe {
         let context = JS_CONTEXT.get().unwrap();
         let shopify = ENTRYPOINT.0.get().unwrap();
@@ -98,13 +111,32 @@ pub extern "C" fn execute() {
 }
 
 #[export_name = "canonical_abi_realloc"]
-pub extern "C" fn canonical_abi_realloc(_ptr: u32, size: u32, _align: u32, _new_size: u32) -> *mut std::ffi::c_void {
-    // Don't really understand what this and the return type is
-    Box::into_raw(vec![0u8; size as usize].into_boxed_slice()) as _
+pub unsafe extern "C" fn canonical_abi_realloc(
+    orignal_ptr: *mut u8, original_size: usize, alignment: usize, new_size: usize
+) -> *mut std::ffi::c_void {
+    // 1. Allocate memory of new_size with alignment.
+    // 2. If original_ptr != 0
+    //    a. copy min(new_size, original_size) bytes from original_ptr to new memory
+    //    b. de-allocate original_ptr
+    // 3. return new memory ptr
+
+    // https://doc.rust-lang.org/std/alloc/struct.Layout.html
+    // https://doc.rust-lang.org/std/alloc/fn.alloc.html
+    assert!(new_size >= original_size);
+
+    let new_mem = alloc(Layout::from_size_align(new_size, alignment)
+        .expect("Could not allocate with specified size & alignment"));
+
+    if !original_ptr.is_null() {
+        copy_nonoverlapping(original_ptr, new_mem, original_size);
+        canonical_abi_free(original_ptr, original_size, alignment);
+    }
+    new_mem
 }
 
 #[export_name = "canonical_abi_free"]
-pub extern "C" fn canonical_abi_free(_ptr: u32, _size: u32, _align: u32) {
+pub unsafe extern "C" fn canonical_abi_free(ptr: *mut u8, size: usize, alignment: usize) {
+    dealloc(ptr, Layout::from_size_align(size, alignment))
 }
 
 // #[export_name = "core_malloc"]

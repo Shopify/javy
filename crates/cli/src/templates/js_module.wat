@@ -1,6 +1,6 @@
 (module
-  (import "js_engine" "core_malloc" (func $core_malloc (param i32) (result i32)))
-  (import "js_engine" "run_js_script" (func $run_js_script (param i32 i32)))
+  (import "js_engine" "canonical_abi_realloc" (func $canonical_abi_realloc (param i32 i32 i32 i32) (result i32)))
+  (import "js_engine" "execute" (func $run_js_script (param i32 i32)))
   (import "js_engine" "memory" (memory $js_engine_memory 1)) ;; 0
   (memory $js_code_memory 1) ;; 1
 
