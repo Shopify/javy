@@ -25,7 +25,7 @@ fn main() -> Result<()> {
     let js_wasm_binary = wat::parse_str(js_wat)?;
     fs::write(&opts.output, &js_wasm_binary)?;
 
-    let core_js_wasm = include_bytes!("../javy_core.wizened.wasm");
+    let core_js_wasm = include_bytes!("../javy_core.init_engine_wizened.wasm");
 
     let mut wasm_config = wasmtime::Config::new();
     wasm_config

@@ -26,6 +26,9 @@ core-wasi:
 wizen-core:
 	wizer --allow-wasi target/wasm32-wasi/release/javy_core.wasm -o crates/cli/javy_core.wizened.wasm 
 
+wizen-core-init-engine:
+	wizer --allow-wasi -f init_engine target/wasm32-wasi/release/javy_core.wasm -o crates/cli/javy_core.init_engine_wizened.wasm 
+
 test-core:
 		cd crates/core \
 				&& cargo wasi test --features standalone-wasi -- --nocapture \
