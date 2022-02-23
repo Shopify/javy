@@ -16,8 +16,13 @@ use std::ptr::copy_nonoverlapping;
 static ALLOC: wee_alloc::WeeAlloc = wee_alloc::WeeAlloc::INIT;
 
 static mut JS_CONTEXT: OnceCell<Context> = OnceCell::new();
-static mut ENTRYPOINT: (OnceCell<Value>, OnceCell<Value>) = (OnceCell::new(), OnceCell::new());
 static SCRIPT_NAME: &str = "script.js";
+
+// Unlike C's realloc, zero-length allocations need not have
+// unique addresses, so a zero-length allocation may be passed
+// in and also requested, but it's ok to return anything that's
+// non-zero to indicate success.
+const ZERO_SIZE_ALLOCATION_PTR: *mut u8 = 1 as _;
 
 // // TODO
 // //
@@ -70,49 +75,80 @@ pub extern "C" fn init_engine() {
 //   }
 
 #[export_name = "init_src"]
-pub unsafe extern "C" fn init_src(js_str_ptr: *const u8, js_str_len: usize) {
+pub unsafe extern "C" fn init_src(js_str_ptr: *mut u8, js_str_len: usize) {
     // TODO: Who is supposed to own this pointer? Is it the caller who allocated, or this module?
-    let js = String::from_utf8(Vec::from_raw_parts(js_str_ptr, js_str_len));
-
-    unsafe {
-        let context = JS_CONTEXT.get().unwrap();
-        let _ = context.eval_global(SCRIPT_NAME, &js).unwrap();
-        let global = context.global_object().unwrap();
-        let shopify = global.get_property("Shopify").unwrap();
-        let main = shopify.get_property("main").unwrap();
-
-        ENTRYPOINT.0.set(shopify).unwrap();
-        ENTRYPOINT.1.set(main).unwrap();
-    }
+    let js = String::from_utf8(Vec::from_raw_parts(js_str_ptr, js_str_len, js_str_len)).unwrap();
+    let context = JS_CONTEXT.get().unwrap();
+    let _ = context.eval_global(SCRIPT_NAME, &js).unwrap();
 }
 
+
+// mod input {
+//     #[export_name = "execute"]
+//     unsafe extern "C" fn __wit_bindgen_execute(arg0: i32, arg1: i32, arg2: i32, ){
+//       <super::Input as Input>::execute(match arg0 {
+//         0 => None,
+//         1 => Some({
+//           let len0 = arg2 as usize;
+          
+//           String::from_utf8(Vec::from_raw_parts(arg1 as *mut _, len0, len0)).unwrap()
+//         }),
+//         _ => panic!("invalid enum discriminant"),
+//       });
+//     }
+//     pub trait Input {
+//       fn execute(name: Option<String>,);
+//     }
+//   }
+  
+
 #[export_name = "execute"]
-pub extern "C" fn execute() {
+pub unsafe extern "C" fn execute(func_obj_path_is_some: u32, func_obj_path_ptr: *mut u8, func_obj_path_len: usize) {
+    let func_obj_path = match func_obj_path_is_some {
+        0 => "Shopify.main".to_string(),
+        _ => String::from_utf8(Vec::from_raw_parts(func_obj_path_ptr, func_obj_path_len, func_obj_path_len)).unwrap(),
+    };
+
+    assert!(func_obj_path != "");
+
+    let context = JS_CONTEXT.get().unwrap();
+    // let mut this = context.global_object().unwrap();
+    // let mut func = this.clone();
+    // {
+    //     let this = &mut this;
+    //     let func = &mut func;
+    //     for obj in func_obj_path.split('.') {
+    //         let next = func.get_property(obj).unwrap();
+    //         *this = *func;
+    //         *func = next;
+    //     };
+    // };
+
+    let (this, func) = func_obj_path.split('.').fold((context.global_object().unwrap(), context.global_object().unwrap()), |(this, func), obj| {
+        let next = func.get_property(obj).unwrap();
+        (func, next)
+    });
+
+
     // what should this return?
     // what should this return?
     // we discussed passing in the script, and fn name instead of hard coding it
     // having some trouble passing them in as args in a ffi-safe way. Tried String and CString types
-    unsafe {
-        let context = JS_CONTEXT.get().unwrap();
-        let shopify = ENTRYPOINT.0.get().unwrap();
-        let main = ENTRYPOINT.1.get().unwrap();
-        let input_bytes = engine::load().expect("Couldn't load input");
+    let input_bytes = engine::load().expect("Couldn't load input");
+    let input_value = transcode_input(&context, &input_bytes).unwrap();
+    let output_value = func.call(&this, &[input_value]);
 
-        let input_value = transcode_input(&context, &input_bytes).unwrap();
-        let output_value = main.call(&shopify, &[input_value]);
-
-        if output_value.is_err() {
-            panic!("{}", output_value.unwrap_err().to_string());
-        }
-
-        let output = transcode_output(output_value.unwrap()).unwrap();
-        engine::store(&output).expect("Couldn't store output");
+    if output_value.is_err() {
+        panic!("{}", output_value.unwrap_err().to_string());
     }
+
+    let output = transcode_output(output_value.unwrap()).unwrap();
+    engine::store(&output).expect("Couldn't store output");
 }
 
 #[export_name = "canonical_abi_realloc"]
 pub unsafe extern "C" fn canonical_abi_realloc(
-    orignal_ptr: *mut u8, original_size: usize, alignment: usize, new_size: usize
+    original_ptr: *mut u8, original_size: usize, alignment: usize, new_size: usize
 ) -> *mut std::ffi::c_void {
     // 1. Allocate memory of new_size with alignment.
     // 2. If original_ptr != 0
@@ -124,19 +160,21 @@ pub unsafe extern "C" fn canonical_abi_realloc(
     // https://doc.rust-lang.org/std/alloc/fn.alloc.html
     assert!(new_size >= original_size);
 
-    let new_mem = alloc(Layout::from_size_align(new_size, alignment)
-        .expect("Could not allocate with specified size & alignment"));
+    let new_mem = match new_size {
+        0 => ZERO_SIZE_ALLOCATION_PTR,
+        _ => alloc(Layout::from_size_align(new_size, alignment).unwrap()),
+    };
 
-    if !original_ptr.is_null() {
+    if !original_ptr.is_null() && original_size != 0 {
         copy_nonoverlapping(original_ptr, new_mem, original_size);
         canonical_abi_free(original_ptr, original_size, alignment);
     }
-    new_mem
+    new_mem as _
 }
 
 #[export_name = "canonical_abi_free"]
 pub unsafe extern "C" fn canonical_abi_free(ptr: *mut u8, size: usize, alignment: usize) {
-    dealloc(ptr, Layout::from_size_align(size, alignment))
+    if size > 0 { dealloc(ptr, Layout::from_size_align(size, alignment).unwrap()) };
 }
 
 // #[export_name = "core_malloc"]
