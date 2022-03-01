@@ -5,7 +5,7 @@
   (import "js_engine" "memory" (memory $js_engine_memory 1)) ;; 0
   (memory $js_code_memory 1) ;; 1
 
-  (func (export "shopify_main")
+  (func (export "_start")
     (local $malloc_result i32)
     (local $js_string_length_bytes i32)
 

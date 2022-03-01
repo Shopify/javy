@@ -1,5 +1,4 @@
 use anyhow::Result;
-#[cfg(feature = "standalone-wasi")]
 use std::io::{copy, stdin, stdout, Write};
 
 #[cfg(not(feature = "standalone-wasi"))]
@@ -11,14 +10,13 @@ extern "C" {
 }
 
 pub fn load() -> Result<Vec<u8>> {
-    #[cfg(not(feature = "standalone-wasi"))]
-    return load_from_abi();
+    let mut reader = stdin();
+    let mut output: Vec<u8> = vec![];
 
-    #[cfg(feature = "standalone-wasi")]
-    return load_from_stdin();
+    copy(&mut reader, &mut output)?;
+    Ok(output)
 }
 
-#[cfg(feature = "standalone-wasi")]
 fn load_from_stdin() -> Result<Vec<u8>> {
     let mut reader = stdin();
     let mut writer: Vec<u8> = vec![];
@@ -43,13 +41,8 @@ fn load_from_abi() -> Result<Vec<u8>> {
 }
 
 pub fn store(bytes: &[u8]) -> Result<()> {
-    #[cfg(not(feature = "standalone-wasi"))]
-    unsafe {
-        store_to_abi(bytes)?
-    };
-
-    #[cfg(feature = "standalone-wasi")]
-    store_to_stdout(bytes)?;
+    let mut handle = stdout();
+    handle.write_all(bytes)?;
 
     Ok(())
 }
@@ -60,7 +53,6 @@ unsafe fn store_to_abi(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "standalone-wasi")]
 pub fn store_to_stdout(bytes: &[u8]) -> Result<()> {
     let value: serde_json::Value = rmp_serde::from_read_ref(bytes)?;
     let string = serde_json::to_string(&value)?;

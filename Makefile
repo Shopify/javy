@@ -4,7 +4,7 @@
 install:
 	cargo install --path crates/cli
 
-cli: core
+cli: core-wasi
 		cd crates/cli && cargo build --release && cd -
 
 check-benchmarks:

@@ -58,7 +58,7 @@ fn main() -> Result<()> {
     // And with that we can perform the final link and the execute the module.
     let js_instance = linker.instantiate(&mut store, &js_module)?;
     println!("instantiated js_module");
-    let run = js_instance.get_typed_func::<(), (), _>(&mut store, "shopify_main")?;
+    let run = js_instance.get_typed_func::<(), (), _>(&mut store, "_start")?;
     println!("got shopify_main functions");
     run.call(&mut store, ())?;
     println!("called shopify_main");
